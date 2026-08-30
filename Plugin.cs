@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using GorillaNetworking;
 using HarmonyLib;
 using Photon.Pun;
@@ -10,15 +10,58 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
+using UnityEngine.Networking;
 
 namespace TooMuchInfo
 {
     [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
     public class Plugin : BaseUnityPlugin
     {
+        public static Dictionary<string, string> FriendNames = new Dictionary<string, string>();
+
+        public static bool ShowCreationDate = true;
+        public static bool ShowColor = true;
+        public static bool ShowPlatform = true;
+        public static bool ShowCosmetics = true;
+        public static bool ShowMods = true;
+        public static bool ShowTagged = true;
+        public static bool ShowFPS = true;
+        public static bool ShowTurnSettings = true;
+        public static bool ShowFriendNames = true;
+
         void Start()
         {
             HarmonyPatches.ApplyHarmonyPatches();
+            StartCoroutine(LoadFriendsData());
+        }
+
+        IEnumerator LoadFriendsData()
+        {
+            string listUrl = "https://raw.githubusercontent.com/helenskeleton/GorillaTagInformation/refs/heads/main/Friends.txt";
+            using (UnityWebRequest uwr = UnityWebRequest.Get(listUrl))
+            {
+                yield return uwr.SendWebRequest();
+
+                if (uwr.result == UnityWebRequest.Result.ConnectionError || uwr.result == UnityWebRequest.Result.ProtocolError)
+                {
+                    Debug.Log("Failed to load URL': " + uwr.error);
+                }
+                else
+                {
+                    string text = uwr.downloadHandler.text;
+                    string[] lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (string line in lines)
+                    {
+                        string[] parts = line.Split(';');
+                        if (parts.Length >= 2)
+                        {
+                            string friendName = parts[0].Trim();
+                            string playFabId = parts[1].Trim();
+                            FriendNames[playFabId] = friendName;
+                        }
+                    }
+                }
+            }
         }
 
         static string CheckCosmetics(VRRig rig)
@@ -34,7 +77,7 @@ namespace TooMuchInfo
                 { "LBANI.", new string[] { "AA CREATOR BADGE", "291447" } } };
             foreach (KeyValuePair<string, string[]> specialCosmetic in specialCosmetics)
             {
-                if (rig.rawCosmeticString.Contains(specialCosmetic.Key))
+                if (Traverse.Create(rig).Method("HasCosmetic", specialCosmetic.Key).GetValue<bool>())
                     specialties += (specialties == "" ? "" : ", ") + "<color=#" + specialCosmetic.Value[1] + ">" + specialCosmetic.Value[0] + "</color>";
             }
 
@@ -47,6 +90,7 @@ namespace TooMuchInfo
             NetPlayer creator = rig.Creator;
 
             Dictionary<string, string[]> specialModsList = new Dictionary<string, string[]> {
+                { "github.com/helenskeleton/noleaves", new string[] { "NO LEAVES", "32CD32" } },
                 { "genesis", new string[] { "GENESIS", "07019C" } },
                 { "HP_Left", new string[] { "HOLDABLEPAD", "332316" } },
                 { "GrateVersion", new string[] { "GRATE", "707070" } },
@@ -142,7 +186,7 @@ namespace TooMuchInfo
             CosmeticsController.CosmeticSet cosmeticSet = rig.cosmeticSet;
             foreach (CosmeticsController.CosmeticItem cosmetic in cosmeticSet.items)
             {
-                if (!cosmetic.isNullItem && !rig.rawCosmeticString.Contains(cosmetic.itemName))
+                if (!cosmetic.isNullItem && !Traverse.Create(rig).Method("HasCosmetic", cosmetic.itemName).GetValue<bool>())
                 {
                     specialMods += (specialMods == "" ? "" : ", ") + "<color=green>COSMETX</color>";
                     break;
@@ -151,6 +195,7 @@ namespace TooMuchInfo
 
             return specialMods == "" ? null : specialMods;
         }
+
 
         static Dictionary<string, string> datePool = new Dictionary<string, string> { };
         static string CreationDate(VRRig rig)
@@ -195,15 +240,15 @@ namespace TooMuchInfo
 
         static string GetPlatform(VRRig rig)
         {
-            string concatStringOfCosmeticsAllowed = rig.rawCosmeticString;
-
-            if (concatStringOfCosmeticsAllowed.Contains("S. FIRST LOGIN"))
+            if (Traverse.Create(rig).Method("HasCosmetic", "S. FIRST LOGIN").GetValue<bool>())
                 return "STEAM";
-            else if (concatStringOfCosmeticsAllowed.Contains("FIRST LOGIN") || rig.Creator.GetPlayerRef().CustomProperties.Count >= 2)
+            else if (Traverse.Create(rig).Method("HasCosmetic", "FIRST LOGIN").GetValue<bool>() || rig.Creator.GetPlayerRef().CustomProperties.Count >= 2)
                 return "PC";
 
             return "STANDALONE";
         }
+
+
 
         static string GetTurnSettings(VRRig rig)
         {
@@ -245,34 +290,46 @@ namespace TooMuchInfo
                     };
 
                     string creation = CreationDate(rig);
-                    if (creation != null) lines.Add(creation);
+                    if (ShowCreationDate && creation != null) lines.Add(creation);
 
                     string color = FormatColor(rig.playerColor);
-                    if (color != null) lines.Add(color);
+                    if (ShowColor && color != null) lines.Add(color);
 
                     string platform = GetPlatform(rig);
-                    if (platform != null) lines.Add(platform);
+                    if (ShowPlatform && platform != null) lines.Add(platform);
 
                     string cosmetics = CheckCosmetics(rig);
-                    if (cosmetics != null) lines.Add(cosmetics);
+                    if (ShowCosmetics && cosmetics != null) lines.Add(cosmetics);
+
+                    string userId = creator != null ? creator.UserId : null;
+                    if (userId == null && rig == GorillaTagger.Instance.offlineVRRig && PhotonNetwork.LocalPlayer != null)
+                    {
+                        userId = PhotonNetwork.LocalPlayer.UserId;
+                    }
+
+                    if (ShowFriendNames && userId != null && FriendNames.TryGetValue(userId, out string friendName))
+                    {
+                        lines.Add("<color=yellow>" + friendName + "</color>");
+                    }
 
                     string mods = CheckMods(rig);
-                    if (mods != null) lines.Add("MODS " + mods);
+                    if (ShowMods && mods != null) lines.Add("MODS " + mods);
 
                     string tagged = GetTaggedPlayer(rig);
-                    if (tagged != null) lines.Add(tagged);
+                    if (ShowTagged && tagged != null) lines.Add(tagged);
 
                     string fps = GetFPS(rig);
-                    if (fps != null) lines.Add(fps);
+                    if (ShowFPS && fps != null) lines.Add(fps);
 
                     string turnSettings = GetTurnSettings(rig);
-                    if (turnSettings != null) lines.Add(turnSettings);
+                    if (ShowTurnSettings && turnSettings != null) lines.Add(turnSettings);
 
                     targetText = string.Join("\n", lines);
                 }
 
                 Regex noRichText = new Regex("<.*?>");
                 rig.playerText1.text = targetText;
+
             } catch { }
         }
     }
