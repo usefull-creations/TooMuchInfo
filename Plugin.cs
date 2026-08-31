@@ -37,7 +37,7 @@ namespace TooMuchInfo
 
         IEnumerator LoadFriendsData()
         {
-            string listUrl = "https://raw.githubusercontent.com/helenskeleton/GorillaTagInformation/refs/heads/main/Friends.txt";
+            string listUrl = "https://raw.githubusercontent.com/poopoovr/GorillaTagInformation/refs/heads/main/Friends.txt";
             using (UnityWebRequest uwr = UnityWebRequest.Get(listUrl))
             {
                 yield return uwr.SendWebRequest();
